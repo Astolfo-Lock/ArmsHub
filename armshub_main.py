@@ -4,11 +4,12 @@ import sys
 
 if '--self-test' in sys.argv:os.environ['QT_QPA_PLATFORM']='offscreen'
 from PyQt6.QtWidgets import QApplication
+from armshub import VERSION
 from armshub.app import ArmsHubWindow
 
 
 def main():
-    app=QApplication(sys.argv);app.setApplicationName('ArmsHub');app.setApplicationVersion('0.3.2')
+    app=QApplication(sys.argv);app.setApplicationName('ArmsHub');app.setApplicationVersion(VERSION)
     root=Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent
     window=ArmsHubWindow(root)
     if '--self-test' in sys.argv:

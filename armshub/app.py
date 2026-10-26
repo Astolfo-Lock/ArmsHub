@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxL
 
 from charmstudio.project import Placement
 from charmstudio.resources import Resources
+from . import VERSION
 from .builder import SURVIVORS,detect_arms,build
 
 
@@ -20,12 +21,12 @@ class ArmsHubWindow(QMainWindow):
         self.root=Path(root);self.resources=Resources();self.profiles=[];self.assignments={}
         self.compiler=Path(r'C:\Program Files (x86)\Steam\steamapps\common\Left 4 Dead 2\bin\studiomdl.exe')
         self.pool=ThreadPoolExecutor(max_workers=1);self.future=None
-        self.setWindowTitle('ArmsHub 0.3.2 · VPK y JSON arrastrables');self.resize(1040,880)
+        self.setWindowTitle('ArmsHub '+VERSION+' · VPK y JSON arrastrables');self.resize(1040,880)
         central=QWidget();self.setCentralWidget(central);layout=QVBoxLayout(central)
         title=QLabel('ArmsHub · Brazos de tus personajes, perfiles de tus charms')
         title.setStyleSheet('font-size:19px;font-weight:bold;padding:10px');layout.addWidget(title)
         note=QLabel('Prototipo separado de Charm Studio. Importa sus perfiles JSON; aquí eliges los brazos y generas un único VPK.\n'
-                    'Geometría compartida en disco. Los charms ocultos siguen ocupando memoria. Validación online pendiente.')
+                    'Bancos separados por brazos y charm, con su pose y escala. Un único VPK. Validación online pendiente.')
         note.setWordWrap(True);layout.addWidget(note)
         self.drop_zone=QLabel('Arrastra tus .vpk y perfiles .json aquí o sobre las tablas.\n'
                              'También puedes soltar un proyecto ArmsHub para recuperar sus brazos y perfiles.')
@@ -279,7 +280,7 @@ class ArmsHubWindow(QMainWindow):
         folder=QFileDialog.getExistingDirectory(self,'Carpeta de salida del prototipo',str(self.root/'dist'))
         if not folder:return
         self.output.setEnabled(False);self.procedural_mode.setEnabled(False)
-        self.log.appendPlainText('Compilando biblioteca compartida. Los originales permanecen intactos…')
+        self.log.appendPlainText('Compilando bancos separados por brazos y charm. Los originales permanecen intactos…')
         snapshot=Resources();snapshot.mounts=list(self.resources.mounts)
         self.future=self.pool.submit(build,snapshot,list(self.profiles),dict(self.assignments),self.compiler,folder,self.root,
                                      procedural_mode=self.procedural_mode.currentData())
@@ -289,10 +290,11 @@ class ArmsHubWindow(QMainWindow):
         future,self.future=self.future,None;self.output.setEnabled(True);self.procedural_mode.setEnabled(True)
         try:
             report=future.result();mib=1024*1024
-            self.log.appendPlainText(f"Listo: {report['profile_count']} perfiles, {report['bank_count']} bancos.\n"
+            self.log.appendPlainText(f"Listo: {report['profile_count']} perfiles, {report['bank_count']} bancos por charm.\n"
                 f"VPK físico: {report['archive_bytes']/mib:.2f} MiB. Datos lógicos: {report['logical_payload_bytes']/mib:.2f} MiB.\n"
                 f"Reutilización de bytes idénticos: {report['saved_payload_bytes']/mib:.2f} MiB ({report['saved_percent_of_logical_payload']} %).\n"
                 'Consulta armshub_report.json. Compilar no certifica renderizado ni compatibilidad online.')
+            self.log.appendPlainText('Para usar el addon: copia el VPK, habilítalo en L4D2, cierra el juego por completo y vuelve a iniciarlo desde Steam.')
             omitted=report.get('omitted_procedures',[])
             self.log.appendPlainText('Modo de huesos: '+report.get('procedural_mode','repair')+
                                      '. Procedimientos omitidos: '+str(len(omitted)))

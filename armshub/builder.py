@@ -10,9 +10,12 @@ from charmstudio.natural_profile import (arms_entries, find_weapon_script,
 from charmstudio.project import Placement, digest
 from charmstudio.resources import Resources
 from charmstudio.source import Model
+from . import VERSION
 from .archive import write_shared_vpk
 from .models import compile_bank, profile_files, charm_key
 from .procedural import MODES
+
+BANK_STRATEGY = 'per_charm'
 
 SURVIVORS = {
     'Gambler': ('Nick','models/weapons/arms/v_arms_gambler_new.mdl'),
@@ -78,10 +81,13 @@ def build(resources, profiles, assignments, compiler, destination, workspace, *,
                 arms_path = original_arms
                 am = next((m for m in reversed(resolved.mounts) if arms_path in m.files),None)
                 if am is None:raise ValueError('Faltan brazos: '+arms_path)
-            group = (str(am.path),arms_path)
+            # Placement remains profile metadata; only geometry-compatible
+            # charm/pose/scale combinations share an arms bank. Other charms
+            # must never enter this bank, even when their materials are hidden.
+            key = charm_key(profile)
+            group = (str(am.path),arms_path,key)
             if group not in groups:
                 groups[group] = dict(mount=am,path=arms_path,charms={},targets=set(),uses=[])
-            key = charm_key(profile)
             groups[group]['charms'][key] = (cm,profile)
             groups[group]['targets'].add(profile.bone)
             use = dict(script=path,survivor=survivor,profile=profile)
@@ -106,13 +112,16 @@ def build(resources, profiles, assignments, compiler, destination, workspace, *,
                 files[name] = data
             scripts[use['script']]['replacements'][use['survivor']] = model_path
         banks.append(dict(arms=group['path'],source=str(mount.path),charms=len(charms),
+                          charm_key=next(iter(charms)),targets=sorted(group['targets']),
                           profiles=len(group['uses']),bones=len(Model(bank.files.__getitem__,bank.path,geometry=False).bones),
                           compiler_log=str(bank.build/'compiler.log'),procedural_events=bank.procedural_events))
     for path,info in scripts.items():files[path] = patch_armshub_script(info['original'],info['replacements'])
-    files['addoninfo.txt'] = b'"AddonInfo" { "addonSteamAppID" "550" "addonTitle" "ArmsHub 0.3.2 EXPERIMENTAL" "addonVersion" "0.3.2" "addonAuthor" "ArmsHub" }\n'
+    files['addoninfo.txt'] = ('"AddonInfo" { "addonSteamAppID" "550" "addonTitle" "ArmsHub '+VERSION+
+                            ' EXPERIMENTAL" "addonVersion" "'+VERSION+'" "addonAuthor" "ArmsHub" }\n').encode('ascii')
     manifest = dict(schema=1,experimental=True,profiles=[asdict(p) for p in profiles],banks=banks,
         assignments=assignments,geometry_sharing='Identical whole VVD/VTX payloads share physical VPK ranges',
-        hiding='Inactive charm materials use $no_draw; geometry and bones remain loaded',
+        bank_strategy=BANK_STRATEGY,inactive_charms_included=False,selective_loading=False,
+        hiding='Only the permanent utility mesh uses $no_draw; no inactive charms are included',
         runtime_verified=False,online_verified=False,weapon_mesh_included=False,procedural_mode=procedural_mode)
     files['armshub/manifest.json'] = json.dumps(manifest,indent=2).encode('utf8')
     output = Path(destination);output.mkdir(parents=True,exist_ok=True)
@@ -122,7 +131,8 @@ def build(resources, profiles, assignments, compiler, destination, workspace, *,
         stats = write_shared_vpk(temporary/'armshub_charms.vpk',files)
         report = dict(asdict(stats),profile_count=len(profiles),bank_count=len(banks),
             saved_percent_of_logical_payload=round(100*stats.saved_payload_bytes/max(1,stats.logical_payload_bytes),2),
-            comparison='Same geometry-bank files packed with and without identical-file sharing; not a comparison against separate lean charm models',
+            comparison='Same per-charm bank files packed with and without identical-file sharing; not a RAM/VRAM measurement or a comparison against legacy multi-charm banks',
+            bank_strategy=BANK_STRATEGY,inactive_charms_included=False,selective_loading=False,
             runtime_verified=False,online_verified=False,banks=banks,procedural_mode=procedural_mode,
             omitted_procedures=[dict(event,source=b['source']) for b in banks
                                 for event in b['procedural_events'] if event['action']=='omitted'])
@@ -133,7 +143,7 @@ def build(resources, profiles, assignments, compiler, destination, workspace, *,
         for name in ['armshub_charms.vpk','armshub_report.json','armshub_project.json']:
             (temporary/name).replace(output/name)
     (output/'LEEME_ArmsHub.txt').write_text(
-        'ARMSHUB 0.3.2: PROTOTIPO EXPERIMENTAL SEPARADO\n\n'
+        'ARMSHUB '+VERSION+': PROTOTIPO EXPERIMENTAL SEPARADO\n\n'
         'Modo procedural: '+procedural_mode+'\n'
         'Arreglar conserva reglas compatibles (tipos 1, 2 y jiggle 5), con referencias adaptadas.\n'
         'No arreglar omite las reglas especiales distintas de jiggle; el movimiento de manos puede cambiar.\n'
@@ -144,12 +154,16 @@ def build(resources, profiles, assignments, compiler, destination, workspace, *,
         'Los materiales de brazos de mods se incluyen con sus dependencias reconocidas; los brazos originales usan materiales del juego.\n'
         'Brazos LOD0; sin variantes de skins/bodygroups en este prototipo. Máximo 128 huesos por banco.\n\n'
         'AHORRO: los VVD/VTX idénticos se almacenan físicamente una sola vez dentro del VPK.\n'
-        'Cada perfil conserva su MDL pequeño. El banco contiene TODOS los charms elegidos para esos brazos.\n'
-        'Los inactivos se ocultan por material, no se eliminan. Esto NO acredita ahorro de RAM/GPU.\n'
+        'Cada banco contiene unos brazos y UN charm con su pose y escala. No incluye otros charms inactivos.\n'
+        'Los perfiles compatibles reutilizan ese banco; cada perfil conserva su hueso, posición y rotación.\n'
+        'Esto NO acredita ahorro de RAM/GPU ni controla qué modelos carga o descarga el motor.\n'
         'El informe compara el mismo banco con y sin reutilización de archivos idénticos.\n'
-        'Una exportación individual con un solo charm puede ser menor que el banco; compara el conjunto completo.\n\n'
+        'Separar bancos puede aumentar el tamaño del VPK y el tiempo de compilación frente al banco con todos los charms.\n\n'
         'VALIDACIÓN: consulta el informe de pruebas del prototipo; no presupongas validación en juego por compilar.\n'
         'La compatibilidad online sigue pendiente y se respetan las restricciones de addons del servidor.\n'
-        'Para una prueba manual, desactiva otros VPK de charms que cambien los mismos scripts, copia este VPK a addons y reinicia desde Steam.\n'
+        'Para una prueba manual, desactiva otros VPK de charms que cambien los mismos scripts y copia este VPK a addons.\n'
+        'Habilítalo en el menú de complementos, CIERRA L4D2 POR COMPLETO y vuelve a iniciarlo desde Steam.\n'
+        'Habilitarlo con el juego abierto puede dejar activos los datos anteriores de armas; cambiar de mapa puede no bastar.\n'
+        'Los JSON de proyecto e informe son para ArmsHub; L4D2 utiliza los scripts y modelos del VPK.\n'
         'No se instala automáticamente ni modifica los VPK originales.\n',encoding='utf8')
     return report
